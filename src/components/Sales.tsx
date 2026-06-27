@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase, type Product, type Sale } from '../lib/supabase';
-import { Plus, Trash2, ShoppingCart, Loader2, AlertCircle, Search, Receipt, TrendingUp } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Plus, Trash2, ShoppingCart, Loader2, AlertCircle, Search, Receipt, TrendingUp, Eye, Shield } from 'lucide-react';
+import AdminConfirmModal from './AdminConfirmModal';
+import InvoiceModal from './InvoiceModal';
 
 interface CartItem {
   product: Product;
@@ -8,6 +11,7 @@ interface CartItem {
 }
 
 export default function Sales() {
+  const { profile } = useAuth();
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,6 +21,11 @@ export default function Sales() {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [selectedInvoiceNumber, setSelectedInvoiceNumber] = useState(0);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
 
   useEffect(() => {
     loadSales();
@@ -125,6 +134,63 @@ export default function Sales() {
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.code.toLowerCase().includes(search.toLowerCase())
   );
+
+  function viewInvoice(sale: Sale, index: number) {
+    setSelectedSale(sale);
+    setSelectedInvoiceNumber(index + 1);
+    setShowInvoiceModal(true);
+  }
+
+  function requestDeleteSale(sale: Sale) {
+    if (profile?.role === 'admin') {
+      if (confirm(`¿Eliminar la venta de $${Number(sale.total).toLocaleString('es-ES')}?\nLos productos serán devueltos al inventario.`)) {
+        performDeleteSale(sale);
+      }
+    } else {
+      setSaleToDelete(sale);
+      setShowAdminModal(true);
+    }
+  }
+
+  async function performDeleteSale(sale: Sale) {
+    // First, get the sale items to restore inventory
+    const { data: items } = await supabase
+      .from('sale_items')
+      .select('*, product:products(quantity)')
+      .eq('sale_id', sale.id);
+
+    if (items) {
+      // Restore inventory for each item
+      for (const item of items) {
+        const currentQty = Number(item.product?.quantity ?? 0);
+        await supabase
+          .from('products')
+          .update({ quantity: currentQty + Number(item.quantity) })
+          .eq('id', item.product_id);
+      }
+    }
+
+    // Delete sale items first
+    await supabase.from('sale_items').delete().eq('sale_id', sale.id);
+
+    // Delete sale
+    const { error } = await supabase.from('sales').delete().eq('id', sale.id);
+    if (error) {
+      alert('No se puede eliminar: ' + error.message);
+    } else {
+      await loadSales();
+      await loadProducts();
+    }
+
+    setSaleToDelete(null);
+    setShowAdminModal(false);
+  }
+
+  function handleAdminConfirm() {
+    if (saleToDelete) {
+      performDeleteSale(saleToDelete);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -304,10 +370,10 @@ export default function Sales() {
           </div>
         ) : (
           <div className="divide-y divide-stone-100 max-h-80 overflow-y-auto">
-            {sales.map(sale => (
+            {sales.map((sale, index) => (
               <div key={sale.id} className="px-5 py-3 hover:bg-stone-50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-stone-800">
                       ${Number(sale.total).toLocaleString('es-ES')}
                     </p>
@@ -317,17 +383,44 @@ export default function Sales() {
                       {sale.sale_items?.length ?? 0} producto(s)
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-1 justify-end max-w-[60%]">
-                    {sale.sale_items?.slice(0, 3).map(item => (
-                      <span key={item.id} className="text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-lg">
-                        {item.product?.name} ×{item.quantity}
-                      </span>
-                    ))}
-                    {(sale.sale_items?.length ?? 0) > 3 && (
-                      <span className="text-xs text-stone-400">
-                        +{(sale.sale_items?.length ?? 0) - 3} más
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap gap-1 justify-end max-w-[50%]">
+                      {sale.sale_items?.slice(0, 2).map(item => (
+                        <span key={item.id} className="text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-lg">
+                          {item.product?.name} ×{item.quantity}
+                        </span>
+                      ))}
+                      {(sale.sale_items?.length ?? 0) > 2 && (
+                        <span className="text-xs text-stone-400">
+                          +{(sale.sale_items?.length ?? 0) - 2} más
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => viewInvoice(sale, index)}
+                        className="p-1.5 text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Ver factura"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => requestDeleteSale(sale)}
+                        className={`p-1.5 text-stone-400 hover:bg-red-50 rounded-lg transition-colors ${
+                          profile?.role === 'admin' ? 'hover:text-red-600' : 'hover:text-red-500'
+                        }`}
+                        title={profile?.role === 'admin' ? 'Eliminar venta' : 'Requiere autorización de administrador'}
+                      >
+                        {profile?.role === 'admin' ? (
+                          <Trash2 className="w-4 h-4" />
+                        ) : (
+                          <div className="relative">
+                            <Trash2 className="w-4 h-4" />
+                            <Shield className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1 bg-white rounded-full" />
+                          </div>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -335,6 +428,26 @@ export default function Sales() {
           </div>
         )}
       </div>
+
+      {/* Invoice Modal */}
+      <InvoiceModal
+        isOpen={showInvoiceModal}
+        onClose={() => setShowInvoiceModal(false)}
+        sale={selectedSale}
+        invoiceNumber={selectedInvoiceNumber}
+      />
+
+      {/* Admin Confirmation Modal for Delete */}
+      <AdminConfirmModal
+        isOpen={showAdminModal}
+        onClose={() => {
+          setShowAdminModal(false);
+          setSaleToDelete(null);
+        }}
+        onConfirm={handleAdminConfirm}
+        title="Autorización Requerida"
+        message={`Para eliminar la venta de $${saleToDelete ? Number(saleToDelete.total).toLocaleString('es-ES') : ''} se requiere autorización de un administrador. Ingrese las credenciales de administrador.`}
+      />
     </div>
   );
 }

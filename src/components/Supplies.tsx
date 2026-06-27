@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase, type Supply } from '../lib/supabase';
-import { Plus, Pencil, Trash2, Search, Wheat, X, Loader2, AlertCircle, AlertTriangle } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Plus, Pencil, Trash2, Search, Wheat, X, Loader2, AlertCircle, AlertTriangle, Shield } from 'lucide-react';
+import AdminConfirmModal from './AdminConfirmModal';
 
 const UNITS = ['kg', 'litros', 'unidades', 'gramos', 'bolsas'];
 
 export default function Supplies() {
+  const { profile } = useAuth();
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -15,6 +18,8 @@ export default function Supplies() {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [supplyToDelete, setSupplyToDelete] = useState<Supply | null>(null);
 
   useEffect(() => { loadSupplies(); }, []);
 
@@ -79,13 +84,31 @@ export default function Supplies() {
     setSaving(false);
   }
 
-  async function handleDelete(s: Supply) {
-    if (!confirm(`¿Eliminar el insumo "${s.name}"?`)) return;
+  function requestDelete(s: Supply) {
+    if (profile?.role === 'admin') {
+      if (confirm(`¿Eliminar el insumo "${s.name}"?`)) {
+        performDelete(s);
+      }
+    } else {
+      setSupplyToDelete(s);
+      setShowAdminModal(true);
+    }
+  }
+
+  async function performDelete(s: Supply) {
     const { error } = await supabase.from('supplies').delete().eq('id', s.id);
     if (error) {
       alert('No se puede eliminar: ' + error.message);
     } else {
       await loadSupplies();
+    }
+    setSupplyToDelete(null);
+    setShowAdminModal(false);
+  }
+
+  function handleAdminConfirm() {
+    if (supplyToDelete) {
+      performDelete(supplyToDelete);
     }
   }
 
@@ -190,10 +213,20 @@ export default function Supplies() {
                             <Pencil className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleDelete(s)}
-                            className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            onClick={() => requestDelete(s)}
+                            className={`p-2 text-stone-400 hover:bg-red-50 rounded-lg transition-colors ${
+                              profile?.role === 'admin' ? 'hover:text-red-600' : 'hover:text-red-500'
+                            }`}
+                            title={profile?.role === 'admin' ? 'Eliminar insumo' : 'Requiere autorización de administrador'}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            {profile?.role === 'admin' ? (
+                              <Trash2 className="w-4 h-4" />
+                            ) : (
+                              <div className="relative">
+                                <Trash2 className="w-4 h-4" />
+                                <Shield className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1 bg-white rounded-full" />
+                              </div>
+                            )}
                           </button>
                         </div>
                       </td>
@@ -307,6 +340,18 @@ export default function Supplies() {
           </div>
         </div>
       )}
+
+      {/* Admin Confirmation Modal for Delete */}
+      <AdminConfirmModal
+        isOpen={showAdminModal}
+        onClose={() => {
+          setShowAdminModal(false);
+          setSupplyToDelete(null);
+        }}
+        onConfirm={handleAdminConfirm}
+        title="Autorización Requerida"
+        message={`Para eliminar el insumo "${supplyToDelete?.name}" se requiere autorización de un administrador. Ingrese las credenciales de administrador.`}
+      />
     </div>
   );
 }

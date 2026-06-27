@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase, type Product, type Category } from '../lib/supabase';
-import { Plus, Pencil, Trash2, Search, Package, X, Loader2, AlertCircle, ImagePlus, ImageIcon } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Plus, Pencil, Trash2, Search, Package, X, Loader2, AlertCircle, ImagePlus, Image as ImageIcon, Shield } from 'lucide-react';
+import AdminConfirmModal from './AdminConfirmModal';
 
 const UNITS = ['unidad', 'kg', 'litro', 'docena', 'bolsa'];
 
 export default function Products() {
+  const { profile } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,6 +22,8 @@ export default function Products() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
 
   useEffect(() => {
     loadProducts();
@@ -150,8 +155,20 @@ export default function Products() {
     setSaving(false);
   }
 
-  async function handleDelete(p: Product) {
-    if (!confirm(`¿Eliminar el producto "${p.name}"?`)) return;
+  function requestDelete(p: Product) {
+    if (profile?.role === 'admin') {
+      // Admin can delete directly with confirmation
+      if (confirm(`¿Eliminar el producto "${p.name}"?`)) {
+        performDelete(p);
+      }
+    } else {
+      // Employee needs admin authorization
+      setProductToDelete(p);
+      setShowAdminModal(true);
+    }
+  }
+
+  async function performDelete(p: Product) {
     // Delete image from storage if exists
     if (p.image_url) {
       const path = p.image_url.split('/products/').pop();
@@ -164,6 +181,14 @@ export default function Products() {
       alert('No se puede eliminar: ' + error.message);
     } else {
       await loadProducts();
+    }
+    setProductToDelete(null);
+    setShowAdminModal(false);
+  }
+
+  function handleAdminConfirm() {
+    if (productToDelete) {
+      performDelete(productToDelete);
     }
   }
 
@@ -262,10 +287,20 @@ export default function Products() {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(p)}
-                          className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          onClick={() => requestDelete(p)}
+                          className={`p-2 text-stone-400 hover:bg-red-50 rounded-lg transition-colors ${
+                            profile?.role === 'admin' ? 'hover:text-red-600' : 'hover:text-red-500'
+                          }`}
+                          title={profile?.role === 'admin' ? 'Eliminar producto' : 'Requiere autorización de administrador'}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {profile?.role === 'admin' ? (
+                            <Trash2 className="w-4 h-4" />
+                          ) : (
+                            <div className="relative">
+                              <Trash2 className="w-4 h-4" />
+                              <Shield className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1 bg-white rounded-full" />
+                            </div>
+                          )}
                         </button>
                       </div>
                     </td>
@@ -429,6 +464,18 @@ export default function Products() {
           </div>
         </div>
       )}
+
+      {/* Admin Confirmation Modal for Delete */}
+      <AdminConfirmModal
+        isOpen={showAdminModal}
+        onClose={() => {
+          setShowAdminModal(false);
+          setProductToDelete(null);
+        }}
+        onConfirm={handleAdminConfirm}
+        title="Autorización Requerida"
+        message={`Para eliminar el producto "${productToDelete?.name}" se requiere autorización de un administrador. Ingrese las credenciales de administrador.`}
+      />
     </div>
   );
 }

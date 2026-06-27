@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase, type Product, type Supply, type Production, type Recipe } from '../lib/supabase';
-import { Plus, Trash2, Factory, X, Loader2, AlertCircle, ChefHat, FlaskConical, Calendar } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { Plus, Trash2, Factory, X, Loader2, AlertCircle, ChefHat, FlaskConical, Calendar, Shield } from 'lucide-react';
+import AdminConfirmModal from './AdminConfirmModal';
 
 type Tab = 'production' | 'recipes';
 
 export default function ProductionPage() {
+  const { profile } = useAuth();
   const [tab, setTab] = useState<Tab>('production');
   const [productions, setProductions] = useState<Production[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -21,6 +24,11 @@ export default function ProductionPage() {
   const [recipeForm, setRecipeForm] = useState({ product_id: '', supply_id: '', quantity_per_unit: '' });
   const [savingRecipe, setSavingRecipe] = useState(false);
   const [recipeError, setRecipeError] = useState<string | null>(null);
+
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [productionToDelete, setProductionToDelete] = useState<Production | null>(null);
+  const [recipeToDelete, setRecipeToDelete] = useState<Recipe | null>(null);
+  const [deleteType, setDeleteType] = useState<'production' | 'recipe'>('production');
 
   useEffect(() => {
     loadAll();
@@ -69,14 +77,27 @@ export default function ProductionPage() {
     setSavingProd(false);
   }
 
-  async function handleDeleteProduction(p: Production) {
-    if (!confirm('¿Eliminar este registro de producción? Se revertirán los cambios de inventario.')) return;
+  function requestDeleteProduction(p: Production) {
+    if (profile?.role === 'admin') {
+      if (confirm('¿Eliminar este registro de producción? Se revertirán los cambios de inventario.')) {
+        performDeleteProduction(p);
+      }
+    } else {
+      setProductionToDelete(p);
+      setDeleteType('production');
+      setShowAdminModal(true);
+    }
+  }
+
+  async function performDeleteProduction(p: Production) {
     const { error } = await supabase.from('productions').delete().eq('id', p.id);
     if (error) {
       alert('Error: ' + error.message);
     } else {
       await loadAll();
     }
+    setProductionToDelete(null);
+    setShowAdminModal(false);
   }
 
   async function handleRecipeSave(e: React.FormEvent) {
@@ -107,13 +128,34 @@ export default function ProductionPage() {
     setSavingRecipe(false);
   }
 
-  async function handleDeleteRecipe(r: Recipe) {
-    if (!confirm('¿Eliminar esta receta?')) return;
+  function requestDeleteRecipe(r: Recipe) {
+    if (profile?.role === 'admin') {
+      if (confirm('¿Eliminar esta receta?')) {
+        performDeleteRecipe(r);
+      }
+    } else {
+      setRecipeToDelete(r);
+      setDeleteType('recipe');
+      setShowAdminModal(true);
+    }
+  }
+
+  async function performDeleteRecipe(r: Recipe) {
     const { error } = await supabase.from('recipes').delete().eq('id', r.id);
     if (error) {
       alert('Error: ' + error.message);
     } else {
       await loadAll();
+    }
+    setRecipeToDelete(null);
+    setShowAdminModal(false);
+  }
+
+  function handleAdminConfirm() {
+    if (deleteType === 'production' && productionToDelete) {
+      performDeleteProduction(productionToDelete);
+    } else if (deleteType === 'recipe' && recipeToDelete) {
+      performDeleteRecipe(recipeToDelete);
     }
   }
 
@@ -200,10 +242,20 @@ export default function ProductionPage() {
                         <div className="flex items-center gap-3">
                           <span className="text-sm font-semibold text-stone-700">{p.quantity} unidades</span>
                           <button
-                            onClick={() => handleDeleteProduction(p)}
-                            className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            onClick={() => requestDeleteProduction(p)}
+                            className={`p-2 text-stone-400 hover:bg-red-50 rounded-lg transition-colors ${
+                              profile?.role === 'admin' ? 'hover:text-red-600' : 'hover:text-red-500'
+                            }`}
+                            title={profile?.role === 'admin' ? 'Eliminar producción' : 'Requiere autorización de administrador'}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            {profile?.role === 'admin' ? (
+                              <Trash2 className="w-4 h-4" />
+                            ) : (
+                              <div className="relative">
+                                <Trash2 className="w-4 h-4" />
+                                <Shield className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1 bg-white rounded-full" />
+                              </div>
+                            )}
                           </button>
                         </div>
                       </div>
@@ -258,10 +310,20 @@ export default function ProductionPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <button
-                            onClick={() => handleDeleteRecipe(r)}
-                            className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            onClick={() => requestDeleteRecipe(r)}
+                            className={`p-2 text-stone-400 hover:bg-red-50 rounded-lg transition-colors ${
+                              profile?.role === 'admin' ? 'hover:text-red-600' : 'hover:text-red-500'
+                            }`}
+                            title={profile?.role === 'admin' ? 'Eliminar receta' : 'Requiere autorización de administrador'}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            {profile?.role === 'admin' ? (
+                              <Trash2 className="w-4 h-4" />
+                            ) : (
+                              <div className="relative">
+                                <Trash2 className="w-4 h-4" />
+                                <Shield className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1 bg-white rounded-full" />
+                              </div>
+                            )}
                           </button>
                         </td>
                       </tr>
@@ -410,6 +472,23 @@ export default function ProductionPage() {
           </div>
         </div>
       )}
+
+      {/* Admin Confirmation Modal for Delete */}
+      <AdminConfirmModal
+        isOpen={showAdminModal}
+        onClose={() => {
+          setShowAdminModal(false);
+          setProductionToDelete(null);
+          setRecipeToDelete(null);
+        }}
+        onConfirm={handleAdminConfirm}
+        title="Autorización Requerida"
+        message={
+          deleteType === 'production'
+            ? `Para eliminar este registro de producción se requiere autorización de un administrador. Ingrese las credenciales de administrador.`
+            : `Para eliminar esta receta se requiere autorización de un administrador. Ingrese las credenciales de administrador.`
+        }
+      />
     </div>
   );
 }
